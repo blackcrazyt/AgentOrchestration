@@ -50,6 +50,30 @@ async def stop_agent(agent_id: str):
     return {"status": "stopped"}
 
 
+
+@router.post("/agents/{agent_id}/artifacts")
+async def upload_artifact(
+    agent_id: str,
+    name: str,
+    request: Request,
+    response: Response,
+):
+    """Upload an artifact for an agent. Body size enforced by MaxBodySizeMiddleware.
+
+    Returns 413 if the Content-Length exceeds the middleware's configured limit.
+    """
+    agent = registry.get(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    content_length = request.headers.get("Content-Length", "0")
+    return {
+        "agent_id": agent_id,
+        "artifact_name": name,
+        "size_bytes": int(content_length),
+        "status": "accepted",
+    }
+
+
 @router.get("/agents/count")
 async def agent_count():
     return {"count": registry.count()}

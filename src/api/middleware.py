@@ -19,6 +19,34 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class MaxBodySizeMiddleware(BaseHTTPMiddleware):
+    """Reject requests whose body exceeds a configurable size limit.
+
+    Protects artifact ingestion and other upload endpoints from
+    unbounded payloads (bounty #1542).
+    """
+
+    DEFAULT_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+
+    def __init__(self, app, max_bytes: int = None):
+        super().__init__(app)
+        self.max_bytes = max_bytes or self.DEFAULT_MAX_BYTES
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        content_length = request.headers.get("Content-Length")
+        if content_length:
+            try:
+                size = int(content_length)
+                if size > self.max_bytes:
+                    return Response(
+                        status_code=413,
+                        content=f"Payload too large: {size} bytes exceeds limit of {self.max_bytes} bytes",
+                    )
+            except ValueError:
+                return Response(status_code=400, content="Invalid Content-Length header")
+        return await call_next(request)
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, max_requests: int = 100, window: int = 60):
         super().__init__(app)
