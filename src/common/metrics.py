@@ -11,7 +11,7 @@ class MetricsCollector:
         self._lock = Lock()
         self._counters: Dict[str, int] = defaultdict(int)
         self._gauges: Dict[str, float] = {}
-        self._histograms: Dict[str, List[float]] = defaultdict(list)
+        self._histograms: Dict[str, Dict[str, float]] = defaultdict(lambda: {"count": 0.0, "sum": 0.0, "min": float("inf"), "max": float("-inf")})
         self._timers: Dict[str, float] = {}
 
     def increment(self, metric: str, value: int = 1) -> None:
@@ -23,8 +23,15 @@ class MetricsCollector:
             self._gauges[metric] = value
 
     def observe(self, metric: str, value: float) -> None:
+        """Record an observation with bounded memory: stores count, sum, min, max only."""
         with self._lock:
-            self._histograms[metric].append(value)
+            h = self._histograms[metric]
+            h["count"] += 1
+            h["sum"] += value
+            if value < h["min"]:
+                h["min"] = value
+            if value > h["max"]:
+                h["max"] = value
 
     def start_timer(self, metric: str) -> None:
         with self._lock:
@@ -43,7 +50,10 @@ class MetricsCollector:
             return {
                 "counters": dict(self._counters),
                 "gauges": dict(self._gauges),
-                "histograms": {k: {"count": len(v), "sum": sum(v), "avg": sum(v) / len(v) if v else 0}
+                "histograms": {k: {"count": int(v["count"]), "sum": v["sum"],
+                                "avg": v["sum"] / v["count"] if v["count"] > 0 else 0,
+                                "min": v["min"] if v["min"] != float("inf") else None,
+                                "max": v["max"] if v["max"] != float("-inf") else None}
                                for k, v in self._histograms.items()},
             }
 

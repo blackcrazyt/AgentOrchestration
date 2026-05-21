@@ -7,6 +7,9 @@ from src.common.config import Config
 from src.common.logging import configure_logging
 
 
+MAX_TAIL_LINES = 10000  # Maximum log tail lines to prevent resource exhaustion
+
+
 def cli():
     parser = argparse.ArgumentParser(description="Agent Orchestrator CLI")
     parser.add_argument("--config", "-c", help="Path to config file")
@@ -41,6 +44,9 @@ def cli():
     elif args.command == "status":
         print("Checking agent status...")
     elif args.command == "logs":
+        if hasattr(args, 'tail') and args.tail and args.tail > MAX_TAIL_LINES:
+            print(f"Error: --tail must be at most {MAX_TAIL_LINES} lines (got {args.tail}).", file=sys.stderr)
+            sys.exit(1)
         print(f"Fetching logs for agent: {args.agent_id}")
     else:
         parser.print_help()

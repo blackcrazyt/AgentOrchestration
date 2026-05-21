@@ -2,6 +2,7 @@
 
 import functools
 import asyncio
+import re
 from typing import Any, Callable, Dict, Optional
 
 
@@ -30,7 +31,18 @@ def task(name: Optional[str] = None, retries: int = 0, timeout: int = 300):
 
 
 def agent(name: str, version: str = "1.0.0", description: str = ""):
-    """Decorator for marking a class as an agent definition."""
+    """Decorator for marking a class as an agent definition.
+    
+    Raises:
+        ValueError: If version doesn't match semver format (MAJOR.MINOR.PATCH).
+    """
+    # Validate version format (semver: MAJOR.MINOR.PATCH with optional pre-release)
+    if not re.match(r'^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$', version):
+        raise ValueError(
+            f"Invalid agent version '{version}'. Must match MAJOR.MINOR.PATCH format. "
+            f"Example: '1.0.0' or '2.1.3-beta'"
+        )
+    
     def decorator(cls: type) -> type:
         cls.__agent_config__ = {
             "name": name,
