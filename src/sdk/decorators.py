@@ -42,7 +42,14 @@ def agent(name: str, version: str = "1.0.0", description: str = ""):
 
 
 def on_event(event_type: str):
-    """Decorator for marking a method as an event handler."""
+    """Decorator for marking a method as an event handler.
+    
+    Raises:
+        ValueError: If event_type is empty or whitespace-only.
+    """
+    if not event_type or not event_type.strip():
+        raise ValueError("on_event requires a non-empty event_type string")
+    
     def decorator(func: Callable) -> Callable:
         func.__event_handler__ = event_type
 
