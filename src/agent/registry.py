@@ -34,6 +34,7 @@ class AgentRegistry:
             "created_at": timestamp,
             "updated_at": timestamp,
             "version": "1.0.0",
+            "config_version": 1,
             "metrics": {"tasks_completed": 0, "errors": 0, "uptime": 0},
         }
         group = agent_type.split(".")[0]
@@ -59,6 +60,7 @@ class AgentRegistry:
             return False
         self._agents[agent_id]["status"] = status.value
         self._agents[agent_id]["updated_at"] = time.time()
+        self._agents[agent_id]["config_version"] = self._agents[agent_id].get("config_version", 1) + 1
         return True
 
     def delete(self, agent_id: str) -> bool:

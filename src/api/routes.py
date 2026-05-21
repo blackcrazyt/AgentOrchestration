@@ -1,6 +1,6 @@
 """API route definitions."""
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request, Response
 from typing import List, Dict, Optional
 
 from src.agent import AgentRegistry, AgentStatus
@@ -16,16 +16,20 @@ async def list_agents(status: Optional[str] = None, group: Optional[str] = None)
 
 
 @router.post("/agents")
-async def register_agent(name: str, agent_type: str, config: Optional[Dict] = None):
+async def register_agent(name: str, agent_type: str, config: Optional[Dict] = None, response: Response = None):
     agent_id = registry.register(name, agent_type, config)
+    agent = registry.get(agent_id)
+    if response and agent:
+        response.headers["ETag"] = f'"{agent["config_version"]}"'
     return {"agent_id": agent_id, "status": "registered"}
 
 
 @router.get("/agents/{agent_id}")
-async def get_agent(agent_id: str):
+async def get_agent(agent_id: str, response: Response):
     agent = registry.get(agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    response.headers["ETag"] = f'"{agent["config_version"]}"'
     return agent
 
 
@@ -37,16 +41,36 @@ async def delete_agent(agent_id: str):
 
 
 @router.post("/agents/{agent_id}/start")
-async def start_agent(agent_id: str):
-    if not registry.update_status(agent_id, AgentStatus.RUNNING):
+async def start_agent(agent_id: str, request: Request, response: Response):
+    agent = registry.get(agent_id)
+    if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    if_match = request.headers.get("If-Match")
+    if if_match is None:
+        raise HTTPException(status_code=412, detail="If-Match header required")
+    expected_version = int(if_match.strip('"'))
+    if agent.get("config_version", 1) != expected_version:
+        raise HTTPException(status_code=412, detail="Precondition Failed: agent config version mismatch")
+    registry.update_status(agent_id, AgentStatus.RUNNING)
+    agent = registry.get(agent_id)
+    response.headers["ETag"] = f'"{agent["config_version"]}"'
     return {"status": "started"}
 
 
 @router.post("/agents/{agent_id}/stop")
-async def stop_agent(agent_id: str):
-    if not registry.update_status(agent_id, AgentStatus.PAUSED):
+async def stop_agent(agent_id: str, request: Request, response: Response):
+    agent = registry.get(agent_id)
+    if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    if_match = request.headers.get("If-Match")
+    if if_match is None:
+        raise HTTPException(status_code=412, detail="If-Match header required")
+    expected_version = int(if_match.strip('"'))
+    if agent.get("config_version", 1) != expected_version:
+        raise HTTPException(status_code=412, detail="Precondition Failed: agent config version mismatch")
+    registry.update_status(agent_id, AgentStatus.PAUSED)
+    agent = registry.get(agent_id)
+    response.headers["ETag"] = f'"{agent["config_version"]}"'
     return {"status": "stopped"}
 
 
