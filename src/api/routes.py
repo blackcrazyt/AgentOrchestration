@@ -1,6 +1,8 @@
 """API route definitions."""
 
-from fastapi import APIRouter, HTTPException, Depends
+import json
+from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi.responses import JSONResponse
 from typing import List, Dict, Optional
 
 from src.agent import AgentRegistry, AgentStatus
@@ -48,6 +50,30 @@ async def stop_agent(agent_id: str):
     if not registry.update_status(agent_id, AgentStatus.PAUSED):
         raise HTTPException(status_code=404, detail="Agent not found")
     return {"status": "stopped"}
+
+
+@router.post("/agents/{agent_id}/clone")
+async def clone_agent(agent_id: str, name: str, request: Request):
+    """Clone an agent template. Requires If-Match header and admin/writer role."""
+    if not request.headers.get("If-Match"):
+        raise HTTPException(status_code=428, detail="If-Match header required")
+
+    role = getattr(request.state, "workspace_role", None)
+    if role not in ("admin", "writer"):
+        raise HTTPException(status_code=403, detail="Forbidden: insufficient permissions")
+
+    new_id = registry.clone_agent(agent_id, name)
+    if new_id is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    new_agent = registry.get(new_id)
+    etag = f'W/"{new_agent["updated_at"]}"'
+
+    return JSONResponse(
+        content=new_agent,
+        status_code=201,
+        headers={"ETag": etag},
+    )
 
 
 @router.get("/agents/count")

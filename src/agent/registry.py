@@ -34,6 +34,7 @@ class AgentRegistry:
             "created_at": timestamp,
             "updated_at": timestamp,
             "version": "1.0.0",
+            "config_version": 1,
             "metrics": {"tasks_completed": 0, "errors": 0, "uptime": 0},
         }
         group = agent_type.split(".")[0]
@@ -69,6 +70,31 @@ class AgentRegistry:
         if group in self._index and agent_id in self._index[group]:
             self._index[group].remove(agent_id)
         return True
+
+    def clone_agent(self, source_id: str, name: str) -> str:
+        """Clone an agent template with a new name. Resets metrics and config_version."""
+        source = self._agents.get(source_id)
+        if source is None:
+            return None
+        agent_id = str(uuid.uuid4())
+        timestamp = time.time()
+        self._agents[agent_id] = {
+            "id": agent_id,
+            "name": name,
+            "type": source["type"],
+            "status": AgentStatus.PENDING.value,
+            "config": dict(source.get("config", {})),
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "version": "1.0.0",
+            "config_version": 1,
+            "metrics": {"tasks_completed": 0, "errors": 0, "uptime": 0},
+        }
+        group = source["type"].split(".")[0]
+        if group not in self._index:
+            self._index[group] = []
+        self._index[group].append(agent_id)
+        return agent_id
 
     def count(self) -> int:
         return len(self._agents)
