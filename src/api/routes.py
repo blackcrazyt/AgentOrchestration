@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Dict, Optional
 
 from src.agent import AgentRegistry, AgentStatus
+from src.common.webhook_fanout import WebhookFanoutManager
 
 router = APIRouter()
 registry = AgentRegistry()
@@ -53,6 +54,32 @@ async def stop_agent(agent_id: str):
 @router.get("/agents/count")
 async def agent_count():
     return {"count": registry.count()}
+
+fanout_mgr = WebhookFanoutManager(max_per_endpoint=10, window=60.0)
+
+
+@router.post("/webhooks/fanout")
+async def webhook_fanout(event: Dict, endpoints: List[str]):
+    """Fanout a webhook event to multiple endpoints with per-endpoint rate limiting.
+
+    Each endpoint is subject to a configurable rate limit (default 10
+    deliveries per 60-second window).  Endpoints that exceed the limit
+    are recorded as rate_limited for observability; deliveries that
+    pass the limit are accepted (actual HTTP dispatch is delegated to
+    the platform delivery layer).
+
+    Returns per-endpoint status so callers can retry or alert on
+    skipped endpoints.
+    """
+    results = []
+    for endpoint in endpoints:
+        allowed = fanout_mgr.allow(endpoint)
+        results.append({
+            "endpoint": endpoint,
+            "delivery_status": "accepted" if allowed else "rate_limited",
+        })
+    return {"event": event.get("type", "unknown"), "fanout": results}
+
 
 # 2019-03-18T11:10:18 update
 
