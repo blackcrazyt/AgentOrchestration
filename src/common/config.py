@@ -12,7 +12,17 @@ class Config:
             self.load(config_path)
         self._load_env_overrides()
 
+    MAX_CONFIG_SIZE = 10 * 1024 * 1024  # 10 MB maximum config file size
+    
     def load(self, path: str) -> None:
+        import os
+        file_size = os.path.getsize(path)
+        if file_size > self.MAX_CONFIG_SIZE:
+            raise ValueError(
+                f"Config file too large: {file_size:,} bytes "
+                f"(max {self.MAX_CONFIG_SIZE:,} bytes). "
+                f"Split configuration or reduce file size."
+            )
         with open(path) as f:
             self._data = json.load(f)
 

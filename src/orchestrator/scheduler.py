@@ -31,11 +31,18 @@ class PriorityQueue:
 
 
 class TaskScheduler:
-    def __init__(self):
+    def __init__(self, max_concurrent_per_tenant: int = 0):
+        """
+        Args:
+            max_concurrent_per_tenant: Max tasks a single tenant can run at once.
+                0 means no limit (backward compatible). 
+        """
         self._queues: Dict[str, PriorityQueue] = {}
         self._scheduled: Dict[str, float] = {}
         self._in_flight: Dict[str, Dict] = {}
+        self._tenant_in_flight: Dict[str, int] = {}
         self._max_retries = 3
+        self._max_concurrent_per_tenant = max_concurrent_per_tenant
 
     def enqueue(self, task: Dict, queue: str = "default", priority: int = 0) -> str:
         task_id = str(uuid4())
@@ -54,6 +61,13 @@ class TaskScheduler:
         self._scheduled[task_id] = time.time() + delay
         return task_id
 
+    def _tenant_has_capacity(self, tenant: str) -> bool:
+        """Check if tenant has capacity for another concurrent task."""
+        if self._max_concurrent_per_tenant <= 0:
+            return True
+        in_flight = self._tenant_in_flight.get(tenant, 0)
+        return in_flight < self._max_concurrent_per_tenant
+    
     async def dequeue(self, queue: str = "default", timeout: float = 1.0) -> Optional[Dict]:
         now = time.time()
         expired = [tid for tid, t in self._scheduled.items() if t <= now]
@@ -63,18 +77,43 @@ class TaskScheduler:
                 self.enqueue(task, queue)
 
         if queue in self._queues and len(self._queues[queue]) > 0:
-            task = self._queues[queue].pop()
-            if task:
-                self._in_flight[task["id"]] = task
-                return task
+            # Scan for a task from a tenant with capacity
+            pq = self._queues[queue]
+            temp = []
+            found = None
+            while len(pq) > 0:
+                candidate = pq.pop()
+                tenant = candidate.get("tenant", "default")
+                if self._tenant_has_capacity(tenant):
+                    found = candidate
+                    break
+                temp.append(candidate)
+            # Re-queue tasks that couldn't be dispatched
+            for t in temp:
+                pq.push(t, priority=t.get("priority", 0))
+            
+            if found:
+                self._in_flight[found["id"]] = found
+                tenant = found.get("tenant", "default")
+                self._tenant_in_flight[tenant] = self._tenant_in_flight.get(tenant, 0) + 1
+                return found
         return None
 
     def complete(self, task_id: str) -> bool:
-        return self._in_flight.pop(task_id, None) is not None
+        task = self._in_flight.pop(task_id, None)
+        if task:
+            tenant = task.get("tenant", "default")
+            if tenant in self._tenant_in_flight:
+                self._tenant_in_flight[tenant] = max(0, self._tenant_in_flight[tenant] - 1)
+            return True
+        return False
 
     def fail(self, task_id: str, queue: str = "default") -> bool:
         task = self._in_flight.pop(task_id, None)
         if task:
+            tenant = task.get("tenant", "default")
+            if tenant in self._tenant_in_flight:
+                self._tenant_in_flight[tenant] = max(0, self._tenant_in_flight[tenant] - 1)
             task["retries"] += 1
             if task["retries"] < self._max_retries:
                 self.enqueue(task, queue, priority=task.get("priority", 0))
