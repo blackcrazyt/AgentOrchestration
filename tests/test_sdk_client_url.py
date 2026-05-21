@@ -5,6 +5,9 @@ Covers: trailing-slash stripping, double-slash prevention, and env-var fallback.
 
 import os
 import unittest
+from unittest.mock import patch, MagicMock
+from urllib.request import Request
+
 from src.sdk.client import OrchestratorClient
 
 
@@ -12,39 +15,48 @@ class TestBaseUrlNormalization(unittest.TestCase):
     """Ensure OrchestratorClient always produces a canonical URL prefix."""
 
     def test_noop_for_trailing_slash(self):
-        """The default URL must not end with a slash after normalization."""
         client = OrchestratorClient(base_url="https://api.example.com/")
         self.assertEqual(client.base_url, "https://api.example.com")
 
     def test_noop_for_no_trailing_slash(self):
-        """A clean URL without a trailing slash stays untouched."""
         client = OrchestratorClient(base_url="https://api.example.com")
         self.assertEqual(client.base_url, "https://api.example.com")
 
     def test_double_slash_prevention(self):
-        """_request must not produce // between base_url and path."""
+        """Monkeypatch urlopen to inspect real Request.full_url.
+
+        This exercises the actual _request URL construction instead of
+        mocking it away, so regressions that reintroduce double-slashes
+        will be caught (see vultuk's review feedback on #1200).
+        """
         client = OrchestratorClient(base_url="https://api.example.com/")
-        # _request is private; we can inspect the generated URL via a mock.
-        recorded_url: list[str] = []
+        captured_req: list[Request] = []
 
-        original_request = client._request
+        def fake_urlopen(req, *args, **kwargs):
+            captured_req.append(req)
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = b'{"ok": true}'
+            mock_resp.__enter__.return_value = mock_resp
+            mock_resp.__exit__.return_value = False
+            return mock_resp
 
-        def capture(method, path, data=None):
-            recorded_url.append(f"{client.base_url}/api/v2{path}")
-            return {}
+        with patch("src.sdk.client.urlopen", fake_urlopen):
+            client.register_agent("test", "test")
 
-        client._request = capture
-        client.register_agent("test", "test")
+        self.assertEqual(len(captured_req), 1)
+        req = captured_req[0]
+        self.assertIsInstance(req, Request)
 
-        self.assertEqual(len(recorded_url), 1)
-        url = recorded_url[0]
-        # Allow :// but no double slashes in path
-        path_part = url.split("://", 1)[1]
-        self.assertNotIn("//", path_part)
-        self.assertTrue(url.startswith("https://api.example.com/api/v2"))
+        full_url = req.full_url
+        path_part = full_url.split("://", 1)[1]
+        self.assertNotIn("//", path_part,
+                         f"Double-slash in URL path: {full_url}")
+        self.assertTrue(
+            full_url.startswith("https://api.example.com/api/v2"),
+            f"Unexpected URL: {full_url}",
+        )
 
     def test_env_var_with_trailing_slash(self):
-        """When AO_API_URL ends with /, strip it."""
         prior = os.environ.get("AO_API_URL")
         os.environ["AO_API_URL"] = "https://env-api.example.com/"
         try:
@@ -57,7 +69,6 @@ class TestBaseUrlNormalization(unittest.TestCase):
                 os.environ["AO_API_URL"] = prior
 
     def test_env_var_without_trailing_slash(self):
-        """When AO_API_URL is clean, keep it intact."""
         prior = os.environ.get("AO_API_URL")
         os.environ["AO_API_URL"] = "https://env-api.example.com"
         try:
@@ -70,12 +81,10 @@ class TestBaseUrlNormalization(unittest.TestCase):
                 os.environ["AO_API_URL"] = prior
 
     def test_multiple_trailing_slashes(self):
-        """Strip every trailing slash, not just the last one."""
         client = OrchestratorClient(base_url="https://multi.example.com///")
         self.assertEqual(client.base_url, "https://multi.example.com")
 
     def test_default_url_noop(self):
-        """The bundled default URL is already clean."""
         client = OrchestratorClient()
         self.assertEqual(client.base_url, "https://api.agent-orchestrator.io")
 
