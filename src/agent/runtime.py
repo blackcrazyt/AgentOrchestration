@@ -1,11 +1,14 @@
-"""Agent Runtime — Manages agent process lifecycle."""
+"""Agent Runtime — Manages agent process lifecycle with trace memory limits.
+
+Bounty #1563: enforce memory limit on trace aggregation.
+"""
 
 import os
 import signal
 import subprocess
 import logging
 from enum import Enum
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +21,70 @@ class RuntimeState(Enum):
     CRASHED = "crashed"
 
 
+class TraceBuffer:
+    """Bounded trace aggregation with configurable memory limit.
+
+    Traces are stored as dictionaries. When the buffer is full,
+    older traces are evicted to stay within the memory limit.
+    """
+
+    # Rough per-trace overhead estimate in bytes (key names + dict overhead)
+    TRACE_OVERHEAD_BYTES = 256
+
+    def __init__(self, max_bytes: int = 10 * 1024 * 1024):  # 10 MB default
+        self.max_bytes = max_bytes
+        self._traces: List[Dict] = []
+        self._current_bytes = 0
+        self._evicted_count = 0
+
+    def add(self, trace: Dict) -> bool:
+        """Add a trace entry. Returns False if rejected due to memory limit."""
+        # Estimate trace size: length of string representation as rough proxy
+        trace_size = len(repr(trace)) + self.TRACE_OVERHEAD_BYTES
+
+        if trace_size > self.max_bytes:
+            logger.warning(f"Single trace ({trace_size} bytes) exceeds max ({self.max_bytes} bytes), rejected")
+            self._evicted_count += 1
+            return False
+
+        # Evict oldest traces until we have room
+        while self._current_bytes + trace_size > self.max_bytes and self._traces:
+            old = self._traces.pop(0)
+            old_size = len(repr(old)) + self.TRACE_OVERHEAD_BYTES
+            self._current_bytes -= old_size
+            self._evicted_count += 1
+
+        self._traces.append(trace)
+        self._current_bytes += trace_size
+        return True
+
+    def get_all(self) -> List[Dict]:
+        """Return all buffered traces."""
+        return list(self._traces)
+
+    def size_bytes(self) -> int:
+        """Current estimated memory usage in bytes."""
+        return self._current_bytes
+
+    def count(self) -> int:
+        """Number of traces currently buffered."""
+        return len(self._traces)
+
+    def evicted(self) -> int:
+        """Total number of traces evicted since creation."""
+        return self._evicted_count
+
+    def clear(self):
+        """Reset the buffer."""
+        self._traces.clear()
+        self._current_bytes = 0
+
+
 class AgentRuntime:
-    def __init__(self):
+    def __init__(self, trace_max_bytes: int = 10 * 1024 * 1024):
         self._processes: Dict[str, subprocess.Popen] = {}
         self._states: Dict[str, RuntimeState] = {}
+        self.traces = TraceBuffer(max_bytes=trace_max_bytes)
 
     def start(self, agent_id: str, command: list, env: Optional[Dict] = None) -> bool:
         if agent_id in self._processes and self._processes[agent_id].poll() is None:
@@ -77,122 +140,18 @@ class AgentRuntime:
         proc = self._processes.get(agent_id)
         return proc is not None and proc.poll() is None
 
-# 2019-01-11T10:56:26 update
+    def record_trace(self, agent_id: str, event: str, data: Dict = None) -> bool:
+        """Record a trace event for an agent. Returns False if memory limit rejects it."""
+        state = self.get_state(agent_id)
+        state_str = state.value if hasattr(state, "value") else str(state)
+        trace = {
+            "agent_id": agent_id,
+            "event": event,
+            "data": data or {},
+            "state": state_str,
+        }
+        return self.traces.add(trace)
 
-# 2019-01-22T16:22:30 update
-
-# 2019-03-06T18:13:59 update
-
-# 2019-03-15T11:30:26 update
-
-# 2019-03-18T11:22:04 update
-
-# 2019-03-29T09:30:22 update
-
-# 2019-05-06T17:17:42 update
-
-# 2019-07-08T10:46:12 update
-
-# 2019-10-30T15:01:34 update
-
-# 2019-11-21T11:46:57 update
-
-# 2019-12-09T13:23:07 update
-
-# 2020-02-18T14:01:01 update
-
-# 2020-02-19T11:51:07 update
-
-# 2020-02-27T18:21:42 update
-
-# 2020-03-11T12:29:19 update
-
-# 2020-04-13T09:40:09 update
-
-# 2020-06-16T14:21:27 update
-
-# 2020-08-12T12:56:50 update
-
-# 2020-08-13T09:41:21 update
-
-# 2020-09-10T08:08:18 update
-
-# 2020-10-02T12:22:16 update
-
-# 2020-10-14T13:05:00 update
-
-# 2020-10-19T14:32:13 update
-
-# 2021-02-11T08:23:22 update
-
-# 2021-02-19T19:20:29 update
-
-# 2021-03-24T19:22:02 update
-
-# 2021-09-03T16:39:23 update
-
-# 2021-10-11T10:52:21 update
-
-# 2021-12-13T09:33:23 update
-
-# 2022-01-04T11:11:07 update
-
-# 2022-07-31T15:24:35 update
-
-# 2022-08-05T19:33:09 update
-
-# 2022-10-07T20:08:25 update
-
-# 2022-10-20T09:57:32 update
-
-# 2023-01-06T17:26:45 update
-
-# 2023-01-12T18:21:36 update
-
-# 2023-03-30T19:52:43 update
-
-# 2023-06-06T16:53:33 update
-
-# 2023-09-21T18:21:37 update
-
-# 2024-01-02T10:34:11 update
-
-# 2024-01-04T10:43:54 update
-
-# 2024-03-28T11:14:49 update
-
-# 2024-04-22T10:30:24 update
-
-# 2024-05-16T14:19:27 update
-
-# 2024-06-04T10:50:47 update
-
-# 2024-08-08T20:51:15 update
-
-# 2024-10-14T18:24:05 update
-
-# 2024-10-28T09:06:13 update
-
-# 2024-12-27T18:03:47 update
-
-# 2025-01-03T09:46:58 update
-
-# 2025-01-20T08:28:48 update
-
-# 2025-02-21T20:23:27 update
-
-# 2025-04-25T13:08:47 update
-
-# 2025-06-11T20:55:12 update
-
-# 2025-06-16T17:35:40 update
-
-# 2025-08-01T19:25:37 update
-
-# 2025-08-27T20:53:40 update
-
-# 2026-01-15T13:31:14 update
-
-# 2026-02-06T16:29:56 update
-
-# 2026-04-02T10:52:38 update
+    def get_traces(self) -> List[Dict]:
+        """Return all buffered traces."""
+        return self.traces.get_all()
