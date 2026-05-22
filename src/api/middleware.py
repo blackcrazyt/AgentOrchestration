@@ -10,6 +10,32 @@ from starlette.responses import Response
 logger = logging.getLogger(__name__)
 
 
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Apply security headers to all responses, including error responses.
+
+    Bounty #1728: ensures security headers are applied even when
+    downstream handlers raise exceptions.
+    """
+
+    SECURITY_HEADERS = {
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "X-XSS-Protection": "1; mode=block",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    }
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        try:
+            response = await call_next(request)
+        except Exception:
+            # Even on exception, return a response with security headers
+            response = Response(status_code=500, content="Internal Server Error")
+        for header_name, header_value in self.SECURITY_HEADERS.items():
+            response.headers.setdefault(header_name, header_value)
+        return response
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         if request.url.path.startswith("/api/v2") and request.url.path != "/api/v2/auth/token":
