@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from src.agent import AgentRegistry, AgentStatus
 from src.orchestrator.scheduler import TaskScheduler
@@ -18,6 +18,12 @@ class OrchestrationEngine:
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.agent_timeout = agent_timeout
         self._running = False
+        self._known_event_types: Set[str] = {
+            "agent.start", "agent.stop", "agent.error",
+            "task.queue", "task.dispatch", "task.complete", "task.fail",
+            "workflow.start", "workflow.complete", "workflow.fail",
+        }
+        self._quarantined: List[Dict] = []
         self._hooks: Dict[str, List[Callable]] = {
             "pre_execute": [],
             "post_execute": [],
