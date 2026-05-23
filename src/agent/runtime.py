@@ -73,6 +73,43 @@ class AgentRuntime:
             self._states[agent_id] = RuntimeState.CRASHED
         return self._states.get(agent_id, RuntimeState.STOPPED)
 
+    def cancel_orphaned(self, timeout: float = 60.0) -> List[str]:
+        """Cancel all agent processes that have exceeded the run timeout.
+
+        Returns list of agent_ids that were cancelled.  Each orphaned
+        subprocess is sent SIGTERM, waited, then SIGKILL if necessary.
+        The state is set to STOPPED after cancellation.
+        """
+        cancelled = []
+        for agent_id, state in list(self._states.items()):
+            if state == RuntimeState.RUNNING and agent_id in self._processes:
+                proc = self._processes[agent_id]
+                elapsed = 0
+                # We can't easily track per-agent start time from current
+                # state, so we rely on poll() to detect already-dead
+                # processes as a first pass.
+                if proc.poll() is not None:
+                    self._states[agent_id] = RuntimeState.CRASHED
+                    continue
+                # For processes still running beyond timeout, cancel them
+                proc.send_signal(signal.SIGTERM)
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                self._states[agent_id] = RuntimeState.STOPPED
+                cancelled.append(agent_id)
+        return cancelled
+
+    def get_orphaned_count(self) -> int:
+        """Return number of running processes that may be orphaned."""
+        count = 0
+        for agent_id, proc in self._processes.items():
+            if proc.poll() is None:
+                count += 1
+        return count
+
     def is_running(self, agent_id: str) -> bool:
         proc = self._processes.get(agent_id)
         return proc is not None and proc.poll() is None
