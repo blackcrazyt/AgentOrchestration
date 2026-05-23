@@ -25,6 +25,60 @@ class WorkflowStep:
         self.error: Optional[str] = None
 
 
+class SensitiveInput:
+    """A workflow input that requires explicit declaration for safe task wiring (bounty #2457).
+
+    Sensitive inputs must be explicitly marked — the validator rejects
+    undeclared sensitive data before workflow dispatch.
+    """
+    VALID_SCOPES = {"credential", "secret", "pii", "token", "key"}
+
+    def __init__(self, name: str, scope: str, default: Any = None):
+        if scope not in self.VALID_SCOPES:
+            raise ValueError(f"Invalid scope '{scope}'. Must be one of {self.VALID_SCOPES}")
+        self.name = name
+        self.scope = scope
+        self.default = default
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "scope": self.scope, "default": self.default}
+
+
+class InputSchemaValidator:
+    """Validates workflow inputs — rejects undeclared sensitive data."""
+
+    def __init__(self, sensitive_inputs: list = None):
+        self._declared: dict = {}
+        self._violations: list = []
+        for si in (sensitive_inputs or []):
+            self._declared[si.name] = si
+
+    def validate(self, inputs: dict) -> bool:
+        """Validate workflow inputs. Returns True if all sensitive inputs are declared."""
+        self._violations.clear()
+        for key, value in inputs.items():
+            # Check if this looks sensitive but isn't declared
+            key_lower = key.lower()
+            if self._is_sensitive_key(key) and key_lower not in self._declared:
+                self._violations.append({
+                    "key": key,
+                    "reason": f"Undeclared sensitive input: '{key}'",
+                })
+        return len(self._violations) == 0
+
+    def _is_sensitive_key(self, key: str) -> bool:
+        """Heuristic: keys containing sensitive patterns must be declared."""
+        sensitive_patterns = ["token", "secret", "password", "key", "credential", "pii"]
+        key_lower = key.lower()
+        return any(p in key_lower for p in sensitive_patterns)
+
+    def get_violations(self) -> list:
+        return list(self._violations)
+
+    def declare(self, sensitive_input: SensitiveInput) -> None:
+        self._declared[sensitive_input.name.lower()] = sensitive_input
+
+
 class Workflow:
     def __init__(self, name: str, description: str = ""):
         self.id = str(uuid4())
