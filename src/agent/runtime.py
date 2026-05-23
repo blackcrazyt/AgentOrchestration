@@ -18,6 +18,40 @@ class RuntimeState(Enum):
     CRASHED = "crashed"
 
 
+class ContextGuard:
+    """Save and restore contextvars across nested agent calls (bounty #2855).
+
+    Context variables (like trace IDs, workspace scopes, auth tokens) can
+    be overwritten when a nested agent call runs in the same thread.  This
+    guard snapshots context before the nested call and restores it after.
+    """
+
+    def __init__(self):
+        self._saved: dict = {}
+        self._active = False
+        self._nested_depth = 0
+
+    def snapshot(self, ctx: dict) -> None:
+        """Save current context before a nested agent call."""
+        self._saved = dict(ctx)
+        self._active = True
+        self._nested_depth += 1
+
+    def restore(self, ctx: dict) -> dict:
+        """Restore saved context after a nested agent call returns."""
+        if not self._active:
+            return ctx
+        self._nested_depth -= 1
+        restored = dict(self._saved)
+        self._saved.clear()
+        if self._nested_depth == 0:
+            self._active = False
+        return restored
+
+    def is_active(self) -> bool:
+        return self._active
+
+
 class AgentRuntime:
     def __init__(self):
         self._processes: Dict[str, subprocess.Popen] = {}
