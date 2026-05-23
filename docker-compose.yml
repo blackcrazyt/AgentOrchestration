@@ -1,0 +1,26 @@
+version: "3.9"
+services:
+  migrate:
+    image: agent-orchestrator:latest
+    command: ["bash", "scripts/migrate.sh"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-sqlite:///data/orchestrator.db}
+    restart: "no"
+    volumes:
+      - data:/data
+
+  app:
+    image: agent-orchestrator:latest
+    command: ["python", "-m", "src.cli.main", "serve"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-sqlite:///data/orchestrator.db}
+    volumes:
+      - data:/data
+
+volumes:
+  data:
