@@ -16,6 +16,68 @@ class AgentStatus(Enum):
     TERMINATED = "terminated"
 
 
+class HandlerVersion:
+    """Semantic version for handler compatibility checks (bounty #2494)."""
+    def __init__(self, version_str: str):
+        self.raw = version_str
+        parts = version_str.lstrip("v").split(".")
+        self.major = int(parts[0]) if len(parts) > 0 else 0
+        self.minor = int(parts[1]) if len(parts) > 1 else 0
+        self.patch = int(parts[2]) if len(parts) > 2 else 0
+
+    def is_compatible_with(self, other: "HandlerVersion") -> bool:
+        """Two versions are compatible if they share the same major version."""
+        return self.major == other.major
+
+    def __str__(self):
+        return self.raw
+
+
+class VersionRegistry:
+    """Tracks registered handler versions and validates compatibility on plugin upgrades (bounty #2494)."""
+
+    MIN_PLUGIN_VERSION = HandlerVersion("1.0.0")
+
+    def __init__(self):
+        self._handlers: dict = {}   # handler_name -> HandlerVersion
+        self._rejected: list = []
+
+    def register(self, name: str, version_str: str) -> bool:
+        """Register a handler version. Returns False if incompatible."""
+        new_ver = HandlerVersion(version_str)
+        if new_ver.major < self.MIN_PLUGIN_VERSION.major:
+            self._rejected.append({
+                "handler": name, "version": version_str,
+                "reason": f"Version {version_str} is below minimum {self.MIN_PLUGIN_VERSION}",
+            })
+            return False
+        self._handlers[name] = new_ver
+        return True
+
+    def is_compatible(self, name: str, version_str: str) -> bool:
+        """Check if a version is compatible with the registered handler."""
+        current = self._handlers.get(name)
+        if not current:
+            return True   # no existing handler — accept
+        requested = HandlerVersion(version_str)
+        if not current.is_compatible_with(requested):
+            self._rejected.append({
+                "handler": name,
+                "current_version": str(current),
+                "requested_version": version_str,
+                "reason": f"Version {version_str} not compatible with registered {current}",
+            })
+            return False
+        return True
+
+    def get_version(self, name: str) -> str:
+        h = self._handlers.get(name)
+        return str(h) if h else ""
+
+    def get_rejected(self) -> list:
+        return list(self._rejected)
+
+
 class AgentRegistry:
     def __init__(self, storage_backend: str = "memory"):
         self.storage_backend = storage_backend
