@@ -43,6 +43,65 @@ class Workflow:
         return self._step_map.get(step_id)
 
 
+class RetentionPolicy:
+    """Artifact retention policy for cleanup scheduling (bounty #2544)."""
+
+    def __init__(self, max_age_days: int = 30, max_count: int = 1000, allowed_types: set = None):
+        self.max_age_days = max_age_days
+        self.max_count = max_count
+        self.allowed_types = allowed_types or {"log", "artifact", "trace", "report"}
+
+    def validate(self, artifact_type: str, age_days: int, count: int) -> bool:
+        """Validate an artifact against retention policy. Returns True if compliant."""
+        if artifact_type not in self.allowed_types:
+            return False
+        if age_days > self.max_age_days:
+            return False
+        if count > self.max_count:
+            return False
+        return True
+
+    def to_dict(self) -> dict:
+        return {
+            "max_age_days": self.max_age_days,
+            "max_count": self.max_count,
+            "allowed_types": sorted(self.allowed_types),
+        }
+
+
+class ArtifactValidator:
+    """Validates artifact retention policies before cleanup scheduling."""
+
+    def __init__(self, policy: RetentionPolicy = None):
+        self.policy = policy or RetentionPolicy()
+        self._violations = []
+
+    def validate_artifact(self, artifact_type: str, age_days: int, count: int) -> bool:
+        """Validate artifact. Records violations for audit."""
+        ok = self.policy.validate(artifact_type, age_days, count)
+        if not ok:
+            self._violations.append({
+                "artifact_type": artifact_type,
+                "age_days": age_days,
+                "count": count,
+                "reason": self._get_violation_reason(artifact_type, age_days, count),
+            })
+        return ok
+
+    def _get_violation_reason(self, artifact_type, age_days, count):
+        reasons = []
+        if artifact_type not in self.policy.allowed_types:
+            reasons.append(f"type '{artifact_type}' not allowed")
+        if age_days > self.policy.max_age_days:
+            reasons.append(f"age {age_days}d exceeds max {self.policy.max_age_days}d")
+        if count > self.policy.max_count:
+            reasons.append(f"count {count} exceeds max {self.policy.max_count}")
+        return "; ".join(reasons)
+
+    def get_violations(self):
+        return list(self._violations)
+
+
 class WorkflowManager:
     def __init__(self):
         self._workflows: Dict[str, Workflow] = {}
