@@ -12,7 +12,8 @@ logger = logging.getLogger(__name__)
 
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        if request.url.path.startswith("/api/v2") and request.url.path != "/api/v2/auth/token":
+        path = request.url.path.rstrip("/") or "/"
+        if path.startswith("/api/v2") and path != "/api/v2/auth/token":
             token = request.headers.get("Authorization", "")
             if not token.startswith("Bearer "):
                 return Response(status_code=401, content="Unauthorized")
@@ -39,6 +40,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return Response(status_code=429, content="Too many requests")
 
         self._requests[client_ip].append(now)
+        return await call_next(request)
+
+
+
+class TrailingSlashMiddleware(BaseHTTPMiddleware):
+    """Normalize trailing slashes AFTER auth checks to prevent bypass."""
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        path = request.url.path
+        if len(path) > 1 and path.endswith("/"):
+            request.scope["path"] = path.rstrip("/")
         return await call_next(request)
 
 
